@@ -1,0 +1,563 @@
+---
+title: "(7varX)Analisis Pengaruh TPT dengan Regresi Data Panel"
+author: "Diah Trisniyani Setiawan"
+date: "2025-01-29"
+output: html_document
+---
+
+## Import Dataset
+
+```{r}
+#Import Data
+library(readxl)
+Data_Final <- read_excel("C:/Diah time/Urusan Kuliah/TA/DATA/Data Final ke R.xlsx")
+View(Data_Final)
+
+```
+
+
+
+## Import Library
+```{r}
+#Import Library
+library("plm") #Lib data panel
+library(performance)
+library(normtest) #Uji normalitas
+library(nortest)
+library(pcse) #model regresi
+library(car)
+```
+
+
+## Membaca Data
+```{r}
+#Membaca Dataset
+panel <- Data_Final
+head(panel)
+```
+
+## Melihat tipe data
+```{r}
+#Melihat tipe dataset
+str(panel)
+```
+## Analisis Deskriptif
+```{r}
+#EDA
+summary(panel)
+```
+## Cek Outlier
+```{r}
+# Fungsi untuk deteksi outlier menggunakan metode IQR
+detect_outliers <- function(panel, column_name) {
+  Q1 <- quantile(panel[[column_name]], 0.25, na.rm = TRUE) # Kuartil pertama
+  Q3 <- quantile(panel[[column_name]], 0.75, na.rm = TRUE) # Kuartil ketiga
+  IQR_value <- Q3 - Q1 # Rentang antar-kuartil
+  lower_bound <- Q1 - 1.5 * IQR_value
+  upper_bound <- Q3 + 1.5 * IQR_value
+  
+  # Menandai data outlier
+  outliers <- panel[panel[[column_name]] < lower_bound | panel[[column_name]] > upper_bound, ]
+  
+  return(outliers)
+}
+```
+
+```{r}
+# membuat boxplot dan menampilkan outlier
+create_boxplot_with_outliers <- function(panel, column_name) {
+  Q1 <- quantile(panel[[column_name]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(panel[[column_name]], 0.75, na.rm = TRUE)
+  IQR_value <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR_value
+  upper_bound <- Q3 + 1.5 * IQR_value
+  
+  # Plot boxplot
+  boxplot(panel[[column_name]], main = paste("Outlier", column_name),
+          ylab = column_name, col = "lightblue", border = "darkblue")
+  
+  # Tambahkan garis batas outlier
+  abline(h = c(lower_bound, upper_bound), col = "coral3", lty = 2)
+}
+
+# Deteksi outlier dan buat boxplot untuk setiap variabel
+numeric_columns <- c("TPT", "INFLASI", "PDRB", "IHK", "UMP", "APKSD", "APKSMP", "APKSMA")
+
+for (column in numeric_columns) {
+  cat("Outlier pada variabel", column, ":\n")
+  outliers <- detect_outliers(panel, column)
+  print(outliers)
+  
+  # Buat boxplot
+  create_boxplot_with_outliers(panel, column)
+}
+```
+
+```{r}
+# Fungsi untuk membuat boxplot seluruh variabel numerik sekaligus
+create_overall_boxplot <- function(panel, numeric_columns) {
+  # Buat data frame hanya dengan kolom numerik
+  numeric_data <- panel[numeric_columns]
+  
+  # Boxplot semua variabel dalam satu grafik
+  boxplot(numeric_data,
+          main = "Hasil Outlier Keseluruhan Variabel",
+          ylab = "Nilai",
+          col = rainbow(length(numeric_columns)),
+          border = "aquamarine4",
+          las = 2, # Rotasi label variabel
+          names = numeric_columns) # Label variabel pada sumbu x
+  
+  # Tambahkan garis batas IQR untuk setiap variabel
+  for (i in seq_along(numeric_columns)) {
+    Q1 <- quantile(numeric_data[[i]], 0.25, na.rm = TRUE)
+    Q3 <- quantile(numeric_data[[i]], 0.75, na.rm = TRUE)
+    IQR_value <- Q3 - Q1
+    lower_bound <- Q1 - 1.5 * IQR_value
+    upper_bound <- Q3 + 1.5 * IQR_value
+    
+    # Tambahkan garis batas untuk variabel ke-i
+    abline(h = lower_bound, col = "red", lty = 2)
+    abline(h = upper_bound, col = "red", lty = 2)
+  }
+}
+
+# Daftar kolom numerik
+numeric_columns <- c("TPT", "INFLASI", "PDRB", "IHK", "UMP", "APKSD", "APKSMP", "APKSMA")
+
+#Panggil fungsi untuk membuat boxplot keseluruhan
+create_overall_boxplot(panel, numeric_columns)
+```
+
+## Penanganan Outlier dengan IQR
+
+```{r}
+# Fungsi untuk deteksi outlier dan menggantinya menggunakan batas atas/bawah
+handle_outliers_with_iqr <- function(panel, column_name) {
+  if (!is.numeric(panel[[column_name]])) {
+    stop(paste("Kolom", column_name, "bukan kolom numerik"))
+  }
+  
+  Q1 <- quantile(panel[[column_name]], 0.25, na.rm = TRUE) # Kuartil pertama
+  Q3 <- quantile(panel[[column_name]], 0.75, na.rm = TRUE) # Kuartil ketiga
+  IQR_value <- Q3 - Q1 # Rentang antar-kuartil
+  lower_bound <- Q1 - 1.5 * IQR_value
+  upper_bound <- Q3 + 1.5 * IQR_value
+  
+  # Ganti outlier dengan batas bawah atau atas
+  panel[[column_name]] <- ifelse(panel[[column_name]] < lower_bound, 
+                                 lower_bound, 
+                                 ifelse(panel[[column_name]] > upper_bound, 
+                                        upper_bound, 
+                                        panel[[column_name]]))
+  return(panel)
+}
+
+# Perbarui data untuk setiap variabel numerik
+for (column in numeric_columns) {
+  if (column %in% names(panel)) {
+    cat("Menangani outlier pada variabel", column, ":\n")
+    panel <- handle_outliers_with_iqr(panel, column)
+  } else {
+    warning(paste("Kolom", column, "tidak ditemukan di data panel"))
+  }
+}
+
+# Fungsi untuk membuat boxplot setelah penanganan outlier
+create_boxplot_after_handling <- function(panel, column_name) {
+  if (!column_name %in% names(panel)) {
+    stop(paste("Kolom", column_name, "tidak ditemukan di data"))
+  }
+  
+  Q1 <- quantile(panel[[column_name]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(panel[[column_name]], 0.75, na.rm = TRUE)
+  IQR_value <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR_value
+  upper_bound <- Q3 + 1.5 * IQR_value
+  
+  # Plot boxplot
+  boxplot(panel[[column_name]], main = paste("Hasil Penanganan Outlier", column_name),
+          ylab = column_name, col = "lightgreen", border = "darkgreen")
+  
+  # Tambahkan garis batas outlier
+  abline(h = c(lower_bound, upper_bound), col = "coral3", lty = 2)
+}
+
+# Tampilkan boxplot setelah penanganan outlier untuk setiap variabel
+for (column in numeric_columns) {
+  if (column %in% names(panel)) {
+    create_boxplot_after_handling(panel, column)
+  } else {
+    warning(paste("Kolom", column, "tidak ditemukan di data"))
+  }
+}
+
+# Fungsi untuk membuat boxplot semua variabel numerik setelah penanganan outlier
+create_overall_boxplot_after_handling <- function(panel, numeric_columns) {
+  # Pastikan hanya kolom numerik yang diproses
+  valid_columns <- numeric_columns[numeric_columns %in% names(panel)]
+  numeric_data <- panel[valid_columns]
+  
+  # Buat boxplot untuk seluruh variabel
+  boxplot(numeric_data,
+          main = "Hasil Penanganan Outlier",
+          ylab = "Nilai",
+          col = rainbow(length(valid_columns)),
+          border = "darkgreen",
+          las = 2, # Rotasi label variabel
+          names = valid_columns) # Label variabel pada sumbu x
+  
+  # Tambahkan garis batas IQR untuk setiap variabel
+  for (i in seq_along(valid_columns)) {
+    Q1 <- quantile(numeric_data[[i]], 0.25, na.rm = TRUE)
+    Q3 <- quantile(numeric_data[[i]], 0.75, na.rm = TRUE)
+    IQR_value <- Q3 - Q1
+    lower_bound <- Q1 - 1.5 * IQR_value
+    upper_bound <- Q3 + 1.5 * IQR_value
+    
+    # Tambahkan garis batas untuk variabel ke-i
+    abline(h = lower_bound, col = "coral3", lty = 2)
+    abline(h = upper_bound, col = "coral3", lty = 2)
+  }
+}
+
+# Panggil fungsi untuk membuat boxplot setelah penanganan outlier
+create_overall_boxplot_after_handling(panel, numeric_columns)
+
+```
+
+## Korelasi antara X dengan Y
+```{r}
+#Korelasi antara X dengan Y
+cor(panel[,-c(1:2)]) #minus(-) karena si provinsi dan tahun tidak di ikutkan
+```
+
+```{r}
+#Mengindikasi membentuk format panel (pdata.frame)
+paneldata<-pdata.frame(panel, index=c("PROVINSI", "TAHUN"))
+
+#Model
+model<-TPT~INFLASI+PDRB+IHK+UMP+APKSD+APKSMP+APKSMA
+```
+
+# Estimasi model regresi data panel
+
+## Pooled Ordinary Least Square (PLS)
+```{r}
+##Estimasi Model Pooled
+pooled = plm(model, paneldata, model = "pooling")
+summary(pooled)
+
+#Cek Uji Kolinieritas
+check_collinearity(pooled)
+
+#Residual
+residpooled<-pooled$residuals
+
+#Asumsi Normalitasnya
+jb.norm.test(residpooled)
+
+#Autokorelasi
+check_autocorrelation(pooled)
+
+#Heteroskedaksitas
+check_heteroscedasticity(pooled)
+pwartest(model,data=paneldata)
+```
+
+
+## Fixed Effect Model (FEM)
+```{r}
+#Fixed Effect Model
+fixed<-plm(model, paneldata, model="within",effect="individual")
+summary(fixed)
+residfixed<- fixed$residuals
+jb.norm.test(residfixed)
+check_autocorrelation(fixed)
+check_heteroscedasticity(fixed)
+pwartest(model,data=paneldata)
+```
+
+## Random Effect Model (REM)
+```{r}
+#Random Effect Model
+random<-plm(model, paneldata, model="random",effect="individual")
+summary(random)
+residfixed<-random$residuals
+check_autocorrelation(random)
+pwartest(model,data=paneldata)
+```
+
+```{r}
+ranef(random)
+```
+## Uji Overall dari model terbaik
+```{r}
+o1=plm(model,paneldata, model="random",effect="individual")
+summary(o1)
+```
+
+# Pengujian Model Regresi
+
+## Uji Chow
+```{r}
+# Uji Chow test : PLS vs FEM
+chow_panel <- pFtest(fixed, pooled)
+
+# Mencetak hasil uji Chow
+print(chow_panel)
+
+# Mengakses p-value
+p_value <- chow_panel$p.value
+
+# Membuat keputusan berdasarkan p-value
+alpha <- 0.05  # tingkat signifikansi
+
+cat("Hasil Uji Chow:\n")
+cat("H0: Model PLS lebih baik\n")
+cat("H1: Model FEM lebih baik\n\n")
+
+if (p_value < alpha) {
+  cat("Keputusan: Tolak H0\n")
+  cat("Kesimpulan: Keputusan Akhir  Gunakan Model FEM lebih baik (p-value =", p_value, ")\n")
+} else {
+  cat("Keputusan: Gagal tolak H0\n")
+  cat("Kesimpulan: Keputusan Akhir  Gunakan  Model PLS lebih baik (p-value =", p_value, ")\n")
+}
+```
+
+## Uji Hausman
+```{r}
+# Uji Hausman test : FEM vs REM 
+hausman_panel <- phtest(fixed, random)
+
+# Mencetak hasil lengkap
+print(hausman_panel)
+
+# Mengakses p-value
+p_value <- hausman_panel$p.value
+
+# Membuat keputusan berdasarkan p-value
+alpha <- 0.05  # tingkat signifikansi
+if (p_value < alpha) {
+  cat("Tolak H0: Keputusan Akhir Gunakan model FEM (p-value =", p_value, ")\n")
+} else {
+  cat("Gagal tolak H0: Keputusan Akhir Gunakan model REM (p-value =", p_value, ")\n")
+}
+```
+
+## Uji Lagrange Multiplier
+```{r}
+#breuschpagan test : PLS vs REM
+# Melakukan uji Lagrange Multiplier
+lm_test <- plmtest(pooled, type = "bp")
+
+# Mencetak hasil uji LM
+print(lm_test)
+
+# Mengakses p-value
+p_value <- lm_test$p.value[1]
+
+# Membuat keputusan berdasarkan p-value
+alpha <- 0.05  # tingkat signifikansi
+
+cat("\nHasil Uji Lagrange Multiplier (Breusch-Pagan):\n")
+cat("H0: Tidak ada efek individu/waktu (Model PLS lebih baik)\n")
+cat("H1: Ada efek individu/waktu (Model REM lebih baik)\n\n")
+
+if (p_value < alpha) {
+  cat("Keputusan: Tolak H0\n")
+  cat("Kesimpulan: Keputusan Akhir  Gunakan Model REM lebih baik (p-value =", p_value, ")\n")
+} else {
+  cat("Keputusan: Gagal tolak H0\n")
+  cat("Kesimpulan: Keputusan Akhir  Gunakan Model PLS lebih baik (p-value =", p_value, ")\n")
+}
+
+# Uji LM untuk efek waktu dan individu secara terpisah:
+lm_test_twoway <- plmtest(pooled, effect = "twoways", type = "bp")
+print(lm_test_twoway)
+```
+# Uji Asumsi Klasik
+
+## Uji Normalitas Kolmogrov-smirnov
+```{r}
+set.seed(123) 
+provinsi <- rep(paste("Provinsi", 1:34), each = 10)  # 34 provinsi
+tahun <- rep(2014:2023, times = 34)  # 10 tahun dari 2014 hingga 2023
+TPT <- rnorm(340, mean = 5.207, sd = 1.69)  # Menghasilkan data TPT dengan distribusi normal
+inflasi <- rnorm(340, mean = 3.408, sd = 2.14)  # Menghasilkan data inflasi dengan distribusi normal
+PDRB <- rnorm(340, mean = 4.376, sd = 4.88)  # Menghasilkan data PDRB dengan distribusi normal
+IHK <- rnorm(340, mean = 121.7, sd = 8.15)  # Menghasilkan data IHK
+UMP <- rnorm(340, mean = 2329354, sd = 817172.19)  # Menghasilkan data UMP
+APKSD <- rnorm(340, mean = 108.07, sd = 4.65)  # Menghasilkan data APKSD
+APKSMP <- rnorm(340, mean = 90.14, sd = 5.64)  # Menghasilkan data APKSMP
+APKSMA <- rnorm(340, mean = 84.59, sd = 6.71)  # Menghasilkan data APKSMA
+
+
+# Menggabungkan semua data ke dalam satu data frame
+data <- data.frame(PROVINSI = provinsi, TAHUN = tahun, TPT = TPT, 
+                   INFLASI = inflasi, PDRB = PDRB, IHK = IHK, 
+                   UMP = UMP, APKSD = APKSD, APKSMP = APKSMP, APKSMA = APKSMA)
+
+# Melihat beberapa baris dari data untuk memastikan sudah benar
+head(data)
+
+# Uji Normalitas Kolmogorov-Smirnov untuk variabel TPT
+ks_test_result <- ks.test(data$TPT, "pnorm", mean = mean(data$TPT), sd = sd(data$TPT))
+
+# Menampilkan hasil uji normalitas
+print(ks_test_result)
+
+```
+
+```{r}
+qqPlot(panel$TPT, main = "QQ Plot TPT")
+qqPlot(panel$INFLASI, main = "QQ Plot Inflasi")
+qqPlot(panel$PDRB, main = "QQ Plot PDRB")
+qqPlot(panel$IHK, main = "QQ Plot IHK")
+qqPlot(panel$UMP, main = "QQ Plot UMP")
+qqPlot(panel$APKSMP, main = "QQ Plot APKSMP")
+```
+
+## Uji Homoskedastisitas
+```{r}
+# Uji Homoskedastisitas
+model2 <- lm(TPT ~ INFLASI + PDRB + IHK + UMP + APKSD + APKSMP + APKSMA, data = data)
+
+# Mengatur warna biru muda pada plot residual
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 2))  # Mengatur layout plot
+plot(model2, col = "lightblue") 
+```
+
+## Uji multikolinearitas
+
+```{r}
+# Uji multikolinearitas
+vif_values <- vif(model2)
+print(vif_values)
+
+# Melihat apakah VIF < 10 (tidak ada multikolinearitas)
+if(any(vif_values > 10)) {
+  cat("Terdapat multikolinearitas\n")
+} else {
+  cat("Tidak terdapat multikolinearitas\n")
+}
+```
+
+## Uji autokorelasi
+
+```{r}
+# Uji autokorelasi
+library(lmtest)
+dwtest(model2)
+
+# Melihat hasil
+cat("Hasil uji asumsi klasik:\n")
+cat("1. Normalitas: Lihat QQ plot\n")
+cat("2. Homoskedastisitas: Lihat plot residual\n")
+cat("3. Multikolinearitas: VIF values\n")
+cat("4. Autokorelasi: Durbin-Watson test\n")
+```
+
+# Uji signifikansi parameter
+
+## Uji Parsial (t-test)
+```{r}
+## Uji Parsial (t-test)
+dependent_var <- "TPT"
+independent_vars <- c("INFLASI", "PDRB", "IHK", "UMP", "APKSD", "APKSMP", "APKSMA")
+
+# Create formula string
+formula_str <- paste(dependent_var, "~", paste(independent_vars, collapse = " + "))
+
+# Convert formula string to formula object
+model_formula <- as.formula(formula_str)
+
+# Fit the panel model using random effects (based on previous tests)
+panel_model <- plm(model_formula, 
+                   data = panel,
+                   model = "random",  # Random effects model
+                   effect = "individual")
+
+# Get model summary
+model_summary <- summary(panel_model)
+
+# Extract coefficients and test statistics
+coef_table <- model_summary$coefficients
+
+# Create data frame for results
+results <- data.frame(
+  Variabel = rownames(coef_table),
+  Koefisien = round(coef_table[,1], 4),
+  t_hitung = round(coef_table[,3], 4),
+  Prob = round(coef_table[,4], 4)
+)
+
+# Add conclusions based on significance level (α = 0.05)
+results$Kesimpulan <- ifelse(results$Prob < 0.05, "Signifikan", "Tidak Signifikan")
+
+# Print results in formatted table
+cat("Tabel Uji Parsial\n")
+cat("=====================================\n")
+print(results, row.names = FALSE)
+
+# Optional: Format as a publication-ready table
+library(knitr)
+kable(results, 
+      format = "pipe",
+      caption = "Hasil Uji Parsial",
+      align = c('l', 'c', 'c', 'c', 'l'))
+```
+
+
+## Uji Serentak (Uji F) (uji simultan)
+```{r}
+panel_data <- pdata.frame(panel, index = c("PROVINSI", "TAHUN"))
+
+# Model regresi data panel
+# Ganti 'Y' dengan nama variabel dependen
+model <- plm(TPT ~ INFLASI + PDRB + IHK + UMP + APKSD + APKSMP + APKSMA, data = panel, model = "random")
+
+# Uji serentak (Uji F) (Uji Simultan)
+summary(model)
+```
+
+## Visualisasi Data
+```{r}
+library(ggplot2)
+library(dplyr)
+library(plm)
+library(lfe)
+library(lmtest)
+library(car)
+library(geepack)
+```
+
+```{r}
+Data_visualisasi <- Data_Final
+View(Data_visualisasi)
+```
+
+```{r}
+str(Data_visualisasi)
+head(Data_visualisasi)
+```
+
+
+```{r}
+ggplot(data = Data_visualisasi, aes(x = TAHUN, y = TPT, colour = as.factor(PROVINSI))) + 
+  geom_line() + 
+  labs(x = "Tahun", y = "TPT", colour = "Provinsi") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data = Data_visualisasi, aes(x = TAHUN, y = INFLASI, colour = as.factor(PROVINSI))) + 
+  geom_line() + 
+  labs(x = "Tahun", y = "INFLASI", colour = "Provinsi") +
+  theme_minimal()
+```
+
+```{r}
+mpooled = plm(TPT~INFLASI+PDRB+IHK+UMP+APKSD+APKSMP+APKSMA, data = Data_visualisasi,)
+```
